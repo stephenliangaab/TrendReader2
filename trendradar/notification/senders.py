@@ -71,7 +71,7 @@ def send_to_feishu(
     get_time_func: Callable = None,
 ) -> bool:
     """
-    发送到飞书（支持分批发送）
+    发送到飞书（支持分批发送，使用消息卡片格式以支持富文本样式）
 
     Args:
         webhook_url: 飞书 Webhook URL
@@ -124,14 +124,29 @@ def send_to_feishu(
         )
         now = get_time_func() if get_time_func else datetime.now()
 
+        # 使用消息卡片格式（interactive），支持 <font color='xxx'> 等富文本样式
+        # 飞书卡片的 markdown 模块支持颜色语法：<font color='red'>文本</font>
         payload = {
-            "msg_type": "text",
-            "content": {
-                "total_titles": total_titles,
-                "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-                "report_type": report_type,
-                "text": batch_content,
-            },
+            "msg_type": "interactive",
+            "card": {
+                "config": {
+                    "wide_screen_mode": True,  # 宽屏模式，更好的阅读体验
+                    "enable_forward": True,    # 允许转发
+                },
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": f"📊 TrendRadar - {report_type}"
+                    },
+                    "template": "blue"  # 卡片头部颜色：blue/green/orange/red/purple
+                },
+                "elements": [
+                    {
+                        "tag": "markdown",
+                        "content": batch_content  # markdown 模块支持 <font color='xxx'> 语法
+                    }
+                ]
+            }
         }
 
         try:
