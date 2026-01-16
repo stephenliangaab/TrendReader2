@@ -47,7 +47,7 @@ storage:
   # 数据拉取配置（从远程同步到本地）
   # 用于 MCP Server 等场景：爬虫存到远程，MCP 拉取到本地分析
   pull:
-    enabled: false            # 是否启用启动时自动拉取
+    enabled: true            # 是否启用启动时自动拉取
     days: 7                   # 拉取最近 N 天的数据（0 = 不拉取）
 
 crawler:
@@ -96,7 +96,7 @@ notification:
   #   - 只想在工作日白天接收推送（如 09:00-18:00）
   #   - 希望在晚上固定时间收到汇总（如 20:00-22:00）
   push_window:
-    enabled: false  # 是否启用推送时间窗口控制，默认关闭
+    enabled: true  # 是否启用推送时间窗口控制，默认关闭
     # 注意：GitHub Actions 执行时间不稳定，时间范围建议至少留足 2 小时
     # 如果想要精准的定时推送，建议使用 Docker 部署在个人服务器上
     time_range:
@@ -194,7 +194,7 @@ platforms:
 # 流程：正文拉取 → AI 总结 → TTS 音频生成 → 上传存储
 #
 podcast:
-  enabled: false                    # 是否启用播客功能（默认关闭）
+  enabled: true                    # 是否启用播客功能（默认关闭）
   
   # 生成配置
   max_keywords: 10                  # 最多为多少个关键词生成播客

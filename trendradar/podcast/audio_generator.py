@@ -215,7 +215,8 @@ class AudioGenerator(BaseTTSGenerator):
                 error="未配置 TTS 服务提供商（provider）"
             )
         
-        if not self.api_key:
+        # Edge TTS 不需要 API Key，其他提供商需要
+        if self.provider != "edge" and not self.api_key:
             return AudioResult(
                 keyword=keyword,
                 success=False,
