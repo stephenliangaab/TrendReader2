@@ -187,10 +187,10 @@ def send_podcast_to_feishu(
     account_label: str = "",
 ) -> bool:
     """
-    发送播客音频到飞书（使用消息卡片格式，支持内嵌音频播放）
+    发送播客音频到飞书（使用消息卡片格式，点击按钮收听）
     
-    飞书卡片支持 audio 元素，可以直接在卡片中播放音频。
-    每个关键词的播客将作为一个独立的卡片元素发送。
+    飞书 Webhook 不支持 audio 元素，使用按钮跳转到音频链接的方式。
+    用户点击按钮后在浏览器中播放音频。
     
     Args:
         webhook_url: 飞书 Webhook URL
@@ -219,8 +219,11 @@ def send_podcast_to_feishu(
     # 添加标题说明
     elements.append({
         "tag": "markdown",
-        "content": "🎙️ **热点新闻播客** - 点击下方播放收听\n\n"
+        "content": "🎙️ **热点新闻播客** - 点击按钮收听 AI 生成的新闻摘要\n"
     })
+    
+    # 添加分隔线
+    elements.append({"tag": "hr"})
     
     # 为每个关键词添加播客内容
     for keyword, data in podcast_data.items():
@@ -232,34 +235,46 @@ def send_podcast_to_feishu(
             continue
         
         # 添加关键词标题和摘要
-        keyword_content = f"**📌 {keyword}** ({article_count} 篇相关报道)\n\n"
+        keyword_content = f"**📌 {keyword}**"
+        if article_count:
+            keyword_content += f" ({article_count} 篇相关报道)"
+        keyword_content += "\n\n"
+        
         if summary:
-            # 截取摘要前 100 字
-            summary_preview = summary[:100] + "..." if len(summary) > 100 else summary
-            keyword_content += f"<font color='grey'>{summary_preview}</font>\n\n"
+            # 截取摘要前 150 字
+            summary_preview = summary[:150] + "..." if len(summary) > 150 else summary
+            keyword_content += f"<font color='grey'>{summary_preview}</font>"
         
         elements.append({
             "tag": "markdown",
             "content": keyword_content
         })
         
-        # 添加音频播放器
-        # 飞书卡片 audio 元素支持外部 URL
+        # 添加收听按钮（跳转到音频链接）
         elements.append({
-            "tag": "audio",
-            "src": audio_url,
-            "text": {
-                "tag": "plain_text",
-                "content": f"🔊 收听「{keyword}」播客"
-            }
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {
+                        "tag": "plain_text",
+                        "content": f"🎧 收听「{keyword}」播客"
+                    },
+                    "type": "primary",
+                    "multi_url": {
+                        "url": audio_url,
+                        "pc_url": audio_url,
+                        "android_url": audio_url,
+                        "ios_url": audio_url
+                    }
+                }
+            ]
         })
         
         # 添加分隔线
-        elements.append({
-            "tag": "hr"
-        })
+        elements.append({"tag": "hr"})
     
-    # 移除最后一个分隔线
+    # 移除最后一个分隔线，换成底部说明
     if elements and elements[-1].get("tag") == "hr":
         elements.pop()
     
@@ -269,7 +284,7 @@ def send_podcast_to_feishu(
         "elements": [
             {
                 "tag": "plain_text",
-                "content": "由 TrendRadar 播客功能自动生成"
+                "content": "🤖 由 TrendRadar 自动生成 | 音频链接 24 小时内有效"
             }
         ]
     })
