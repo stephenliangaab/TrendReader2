@@ -208,28 +208,74 @@ class PodcastManager:
         """
         上传音频文件到存储
         
+        优先使用 S3 存储，如果未配置则使用免费临时托管服务 Litterbox。
+        
         Args:
             local_path: 本地文件路径
             
         Returns:
             str: 远程 URL（如果上传成功）
         """
-        # 检查是否有远程存储配置
+        # 1. 优先尝试 S3 存储
         storage_manager = getattr(self.ctx, 'storage_manager', None)
-        if not storage_manager:
-            return ""
-        
-        # 如果是远程存储后端，尝试上传
-        if hasattr(storage_manager, 'upload_file'):
+        if storage_manager and hasattr(storage_manager, 'upload_file'):
             try:
                 remote_path = f"podcast/{Path(local_path).name}"
                 url = storage_manager.upload_file(local_path, remote_path)
-                return url or ""
+                if url:
+                    return url
             except Exception as e:
-                print(f"  ⚠️ 上传失败: {e}")
-                return ""
+                print(f"  ⚠️ S3 上传失败: {e}")
         
-        return ""
+        # 2. 备用方案：使用 Litterbox 免费临时托管（24小时有效）
+        return self._upload_to_litterbox(local_path)
+    
+    def _upload_to_litterbox(self, local_path: str, expiry: str = "24h") -> str:
+        """
+        上传文件到 Litterbox（catbox.moe 的临时存储服务）
+        
+        Litterbox 是一个免费的临时文件托管服务，无需注册。
+        支持的有效期: 1h, 12h, 24h, 72h
+        
+        Args:
+            local_path: 本地文件路径
+            expiry: 有效期（默认 24h）
+            
+        Returns:
+            str: 文件的公开 URL，失败返回空字符串
+        """
+        import requests
+        
+        litterbox_api = "https://litterbox.catbox.moe/resources/internals/api.php"
+        
+        try:
+            with open(local_path, 'rb') as f:
+                files = {
+                    'fileToUpload': (Path(local_path).name, f, 'audio/mpeg')
+                }
+                data = {
+                    'reqtype': 'fileupload',
+                    'time': expiry  # 1h, 12h, 24h, 72h
+                }
+                
+                response = requests.post(
+                    litterbox_api,
+                    files=files,
+                    data=data,
+                    timeout=60
+                )
+                
+                if response.status_code == 200 and response.text.startswith('https://'):
+                    url = response.text.strip()
+                    print(f"    📤 已上传到临时存储 (24h有效): {url}")
+                    return url
+                else:
+                    print(f"  ⚠️ Litterbox 上传失败: {response.text[:100]}")
+                    return ""
+                    
+        except Exception as e:
+            print(f"  ⚠️ Litterbox 上传出错: {e}")
+            return ""
     
     def generate_podcasts(
         self,
