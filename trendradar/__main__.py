@@ -20,6 +20,8 @@ VERSION = "4.0.0"
 from trendradar.core import load_config
 from trendradar.crawler import DataFetcher
 from trendradar.storage import convert_crawl_results_to_news_data
+from trendradar.podcast import PodcastManager
+from trendradar.notification.senders import send_podcast_to_feishu
 
 
 def check_version_update(
@@ -557,6 +559,69 @@ class NewsAnalyzer:
 
         return results, id_to_name, failed_ids
 
+    def _generate_podcasts(
+        self, stats: List[Dict], title_info: Dict
+    ) -> Optional[Dict]:
+        """
+        生成播客音频
+        
+        使用 PodcastManager 协调正文拉取、AI 总结、音频生成的完整流程。
+        生成完成后，自动发送到飞书（如果配置了飞书 webhook）。
+        
+        Args:
+            stats: 统计数据列表
+            title_info: 标题详情信息
+            
+        Returns:
+            Dict: 播客结果字典，或 None（如果未启用或生成失败）
+        """
+        try:
+            # 创建播客管理器
+            podcast_manager = PodcastManager(self.ctx)
+            
+            # 生成播客
+            podcast_results = podcast_manager.generate_podcasts(stats, title_info)
+            
+            if not podcast_results:
+                print("播客生成完成，但没有成功的结果")
+                return None
+            
+            # 准备飞书推送数据
+            podcast_data = {}
+            for keyword, result in podcast_results.items():
+                if result.success and result.audio_url:
+                    podcast_data[keyword] = {
+                        "summary": result.summary,
+                        "audio_url": result.audio_url,
+                        "article_count": result.article_count,
+                    }
+            
+            # 发送到飞书（如果配置了 webhook）
+            if podcast_data and self.ctx.config.get("FEISHU_WEBHOOK_URL"):
+                from trendradar.core.config import parse_multi_account_config, limit_accounts
+                
+                feishu_urls = parse_multi_account_config(
+                    self.ctx.config["FEISHU_WEBHOOK_URL"]
+                )
+                max_accounts = self.ctx.config.get("MAX_ACCOUNTS_PER_CHANNEL", 3)
+                feishu_urls = limit_accounts(feishu_urls, max_accounts, "飞书播客")
+                
+                for i, url in enumerate(feishu_urls):
+                    if url:
+                        account_label = f"账号{i+1}" if len(feishu_urls) > 1 else ""
+                        send_podcast_to_feishu(
+                            webhook_url=url,
+                            podcast_data=podcast_data,
+                            proxy_url=self.proxy_url,
+                            account_label=account_label,
+                        )
+            
+            return podcast_results
+            
+        except Exception as e:
+            print(f"播客生成出错: {e}")
+            return None
+
     def _execute_mode_strategy(
         self, mode_strategy: Dict, results: Dict, id_to_name: Dict, failed_ids: List
     ) -> Optional[str]:
@@ -661,6 +726,35 @@ class NewsAnalyzer:
             else:
                 # daily模式：直接生成汇总报告并发送通知
                 summary_html = self._generate_summary_report(mode_strategy)
+
+        # 生成播客（如果启用）
+        if self.ctx.config.get("PODCAST", {}).get("ENABLED", False):
+            # 需要重新加载分析数据以获取完整的 stats 和 title_info
+            analysis_data = self._load_analysis_data()
+            if analysis_data:
+                (
+                    all_results,
+                    podcast_id_to_name,
+                    podcast_title_info,
+                    podcast_new_titles,
+                    podcast_word_groups,
+                    podcast_filter_words,
+                    podcast_global_filters,
+                ) = analysis_data
+                
+                # 运行分析获取 stats
+                podcast_stats, _ = self._run_analysis_pipeline(
+                    all_results,
+                    mode_strategy.get("summary_mode", "daily"),
+                    podcast_title_info,
+                    podcast_new_titles,
+                    podcast_word_groups,
+                    podcast_filter_words,
+                    podcast_id_to_name,
+                    global_filters=podcast_global_filters,
+                )
+                
+                self._generate_podcasts(podcast_stats, podcast_title_info)
 
         # 打开浏览器（仅在非容器环境）
         if self._should_open_browser() and html_file:

@@ -163,6 +163,44 @@ def _load_storage_config(config_data: Dict) -> Dict:
     }
 
 
+def _load_podcast_config(config_data: Dict) -> Dict:
+    """加载播客配置"""
+    podcast = config_data.get("podcast", {})
+    jina = podcast.get("jina", {})
+    llm = podcast.get("llm", {})
+    tts = podcast.get("tts", {})
+    
+    podcast_enabled_env = _get_env_bool("PODCAST_ENABLED")
+    
+    return {
+        "ENABLED": podcast_enabled_env if podcast_enabled_env is not None else podcast.get("enabled", False),
+        "MAX_KEYWORDS": _get_env_int("PODCAST_MAX_KEYWORDS") or podcast.get("max_keywords", 10),
+        "MAX_ARTICLES_PER_KEYWORD": _get_env_int("PODCAST_MAX_ARTICLES") or podcast.get("max_articles_per_keyword", 5),
+        "FETCH_DELAY": podcast.get("fetch_delay", 0.5),
+        "OUTPUT_DIR": podcast.get("output_dir", "output/podcast"),
+        "AUDIO_FORMAT": podcast.get("audio_format", "mp3"),
+        # Jina AI 配置（正文拉取）
+        "JINA": {
+            "API_KEY": _get_env_str("JINA_API_KEY") or jina.get("api_key", ""),
+            "API_URL": jina.get("api_url", "https://r.jina.ai/"),
+        },
+        # LLM 配置（摘要生成）
+        "LLM": {
+            "PROVIDER": _get_env_str("PODCAST_LLM_PROVIDER") or llm.get("provider", ""),
+            "API_KEY": _get_env_str("PODCAST_LLM_API_KEY") or _get_env_str("DEEPSEEK_API_KEY") or llm.get("api_key", ""),
+            "MODEL": _get_env_str("PODCAST_LLM_MODEL") or llm.get("model", ""),
+            "API_URL": llm.get("api_url", ""),
+        },
+        # TTS 配置（音频生成）
+        "TTS": {
+            "PROVIDER": _get_env_str("PODCAST_TTS_PROVIDER") or tts.get("provider", ""),
+            "API_KEY": _get_env_str("PODCAST_TTS_API_KEY") or tts.get("api_key", ""),
+            "VOICE": tts.get("voice", "alloy"),
+            "API_URL": tts.get("api_url", ""),
+        },
+    }
+
+
 def _load_webhook_config(config_data: Dict) -> Dict:
     """加载 Webhook 配置"""
     notification = config_data.get("notification", {})
@@ -325,6 +363,9 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
     # Webhook 配置
     config.update(_load_webhook_config(config_data))
+
+    # 播客配置
+    config["PODCAST"] = _load_podcast_config(config_data)
 
     # 打印通知渠道配置来源
     _print_notification_sources(config)

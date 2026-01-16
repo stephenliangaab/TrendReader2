@@ -180,6 +180,142 @@ def send_to_feishu(
     return True
 
 
+def send_podcast_to_feishu(
+    webhook_url: str,
+    podcast_data: Dict[str, Dict],
+    proxy_url: Optional[str] = None,
+    account_label: str = "",
+) -> bool:
+    """
+    发送播客音频到飞书（使用消息卡片格式，支持内嵌音频播放）
+    
+    飞书卡片支持 audio 元素，可以直接在卡片中播放音频。
+    每个关键词的播客将作为一个独立的卡片元素发送。
+    
+    Args:
+        webhook_url: 飞书 Webhook URL
+        podcast_data: 播客数据字典，格式为 {关键词: {summary, audio_url, article_count}}
+        proxy_url: 代理 URL（可选）
+        account_label: 账号标签（多账号时显示）
+        
+    Returns:
+        bool: 发送是否成功
+    """
+    if not podcast_data:
+        print("没有播客数据，跳过飞书播客推送")
+        return False
+    
+    headers = {"Content-Type": "application/json"}
+    proxies = None
+    if proxy_url:
+        proxies = {"http": proxy_url, "https": proxy_url}
+    
+    # 日志前缀
+    log_prefix = f"飞书播客{account_label}" if account_label else "飞书播客"
+    
+    # 构建卡片元素列表
+    elements = []
+    
+    # 添加标题说明
+    elements.append({
+        "tag": "markdown",
+        "content": "🎙️ **热点新闻播客** - 点击下方播放收听\n\n"
+    })
+    
+    # 为每个关键词添加播客内容
+    for keyword, data in podcast_data.items():
+        audio_url = data.get("audio_url", "")
+        summary = data.get("summary", "")
+        article_count = data.get("article_count", 0)
+        
+        if not audio_url:
+            continue
+        
+        # 添加关键词标题和摘要
+        keyword_content = f"**📌 {keyword}** ({article_count} 篇相关报道)\n\n"
+        if summary:
+            # 截取摘要前 100 字
+            summary_preview = summary[:100] + "..." if len(summary) > 100 else summary
+            keyword_content += f"<font color='grey'>{summary_preview}</font>\n\n"
+        
+        elements.append({
+            "tag": "markdown",
+            "content": keyword_content
+        })
+        
+        # 添加音频播放器
+        # 飞书卡片 audio 元素支持外部 URL
+        elements.append({
+            "tag": "audio",
+            "src": audio_url,
+            "text": {
+                "tag": "plain_text",
+                "content": f"🔊 收听「{keyword}」播客"
+            }
+        })
+        
+        # 添加分隔线
+        elements.append({
+            "tag": "hr"
+        })
+    
+    # 移除最后一个分隔线
+    if elements and elements[-1].get("tag") == "hr":
+        elements.pop()
+    
+    # 添加底部说明
+    elements.append({
+        "tag": "note",
+        "elements": [
+            {
+                "tag": "plain_text",
+                "content": "由 TrendRadar 播客功能自动生成"
+            }
+        ]
+    })
+    
+    # 构建完整的卡片消息
+    payload = {
+        "msg_type": "interactive",
+        "card": {
+            "config": {
+                "wide_screen_mode": True,
+                "enable_forward": True,
+            },
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": "🎙️ TrendRadar 热点播客"
+                },
+                "template": "purple"  # 使用紫色主题区分普通消息
+            },
+            "elements": elements
+        }
+    }
+    
+    try:
+        response = requests.post(
+            webhook_url, headers=headers, json=payload, proxies=proxies, timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("StatusCode") == 0 or result.get("code") == 0:
+                print(f"{log_prefix}发送成功，包含 {len(podcast_data)} 个播客")
+                return True
+            else:
+                error_msg = result.get("msg") or result.get("StatusMessage", "未知错误")
+                print(f"{log_prefix}发送失败：{error_msg}")
+                return False
+        else:
+            print(f"{log_prefix}发送失败，状态码：{response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"{log_prefix}发送出错：{e}")
+        return False
+
+
 def send_to_dingtalk(
     webhook_url: str,
     report_data: Dict,

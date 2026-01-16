@@ -176,17 +176,62 @@ platforms:
     name: "bilibili 热搜"
   - id: "cls-hot"
     name: "财联社热门"
+  - id: "ifeng"
+    name: "凤凰网"
+  - id: "tieba"
+    name: "贴吧"
+  - id: "weibo"
+    name: "微博"
   - id: "douyin"
     name: "抖音"
-  - id: "wallstreetcn-news"
-    name: "华尔街最新"
-  - id: "wallstreetcn-hot"
-    name: "华尔街最热"
-  - id: "github"
-    name: "GitHub"
-  - id: "hackernews"
-    name: "Hacker News"
-  - id: "solidot"
-    name: "Solidot"
-  - id: "producthunt"
-    name: "ProductHunt"
+  - id: "zhihu"
+    name: "知乎"
+
+# ========================================
+# 🎙️ 播客功能配置 (Podcast Configuration)
+# ========================================
+# 将热点新闻生成播客音频，支持在飞书等平台收听
+# 流程：正文拉取 → AI 总结 → TTS 音频生成 → 上传存储
+#
+podcast:
+  enabled: false                    # 是否启用播客功能（默认关闭）
+  
+  # 生成配置
+  max_keywords: 10                  # 最多为多少个关键词生成播客
+  max_articles_per_keyword: 5       # 每个关键词最多拉取几篇文章正文
+  fetch_delay: 0.5                  # 正文拉取间隔（秒），避免触发 API 速率限制
+  output_dir: "output/podcast"      # 本地音频输出目录
+  audio_format: "mp3"               # 音频格式（mp3/wav）
+  
+  # ==========================================
+  # Jina AI 正文拉取配置
+  # Get your Jina AI API key for free: https://jina.ai/?sui=apikey
+  # ==========================================
+  jina:
+    api_key: ""                     # Jina AI API 密钥（或环境变量 JINA_API_KEY）
+    api_url: "https://r.jina.ai/"   # Reader API 端点
+  
+  # ==========================================
+  # LLM 摘要生成配置
+  # 支持: deepseek / openai / 302ai 等 OpenAI 兼容接口
+  # ==========================================
+  llm:
+    provider: "deepseek"            # LLM 服务提供商: deepseek / openai / 302ai / other
+    api_key: ""                     # API 密钥（或环境变量 DEEPSEEK_API_KEY / PODCAST_LLM_API_KEY）
+    model: "deepseek-chat"          # 模型名称（deepseek-chat / deepseek-reasoner）
+    api_url: ""                     # API 端点（可选，默认根据 provider 自动设置）
+  
+  # ==========================================
+  # TTS 音频生成配置
+  # 推荐使用 Edge TTS（免费，中文效果极佳）
+  # ==========================================
+  tts:
+    provider: "edge"                # TTS 服务提供商: edge（推荐）/ openai / 302ai / azure
+    api_key: ""                     # API 密钥（Edge TTS 不需要）
+    voice: "zh-CN-XiaoxiaoNeural"   # 语音类型
+                                    # Edge TTS 中文语音：
+                                    #   - zh-CN-XiaoxiaoNeural (晓晓，女声，自然亲切，推荐)
+                                    #   - zh-CN-YunxiNeural (云希，男声，专业播报)
+                                    #   - zh-CN-XiaoyiNeural (晓依，女声，温柔)
+                                    #   - zh-CN-YunjianNeural (云健，男声，新闻播报)
+    api_url: ""                     # API 端点（Edge TTS 不需要）
