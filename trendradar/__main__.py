@@ -21,7 +21,6 @@ from trendradar.core import load_config
 from trendradar.crawler import DataFetcher
 from trendradar.storage import convert_crawl_results_to_news_data
 from trendradar.podcast import PodcastManager
-from trendradar.notification.senders import send_podcast_to_feishu
 
 
 def check_version_update(
@@ -337,6 +336,7 @@ class NewsAnalyzer:
         new_titles: Optional[Dict] = None,
         id_to_name: Optional[Dict] = None,
         html_file_path: Optional[str] = None,
+        podcast_data: Optional[Dict] = None,
     ) -> bool:
         """统一的通知发送逻辑，包含所有判断条件"""
         has_notification = self._has_notification_configured()
@@ -382,6 +382,7 @@ class NewsAnalyzer:
                 proxy_url=self.proxy_url,
                 mode=mode,
                 html_file_path=html_file_path,
+                podcast_data=podcast_data,
             )
 
             if not results:
@@ -452,7 +453,12 @@ class NewsAnalyzer:
         if html_file:
             print(f"{summary_type}报告已生成: {html_file}")
 
-        # 发送通知
+        # 生成播客（如果启用）
+        podcast_data = None
+        if self.ctx.config.get("PODCAST", {}).get("ENABLED", False):
+            podcast_data = self._generate_podcasts(stats, title_info)
+
+        # 发送通知（包含播客数据）
         self._send_notification_if_needed(
             stats,
             mode_strategy["summary_report_type"],
@@ -461,6 +467,7 @@ class NewsAnalyzer:
             new_titles=new_titles,
             id_to_name=id_to_name,
             html_file_path=html_file,
+            podcast_data=podcast_data,
         )
 
         return html_file
@@ -586,7 +593,7 @@ class NewsAnalyzer:
                 print("播客生成完成，但没有成功的结果")
                 return None
             
-            # 准备飞书推送数据
+            # 准备播客数据（用于集成到当日汇总消息中）
             podcast_data = {}
             for keyword, result in podcast_results.items():
                 if result.success and result.audio_url:
@@ -596,27 +603,8 @@ class NewsAnalyzer:
                         "article_count": result.article_count,
                     }
             
-            # 发送到飞书（如果配置了 webhook）
-            if podcast_data and self.ctx.config.get("FEISHU_WEBHOOK_URL"):
-                from trendradar.core.config import parse_multi_account_config, limit_accounts
-                
-                feishu_urls = parse_multi_account_config(
-                    self.ctx.config["FEISHU_WEBHOOK_URL"]
-                )
-                max_accounts = self.ctx.config.get("MAX_ACCOUNTS_PER_CHANNEL", 3)
-                feishu_urls = limit_accounts(feishu_urls, max_accounts, "飞书播客")
-                
-                for i, url in enumerate(feishu_urls):
-                    if url:
-                        account_label = f"账号{i+1}" if len(feishu_urls) > 1 else ""
-                        send_podcast_to_feishu(
-                            webhook_url=url,
-                            podcast_data=podcast_data,
-                            proxy_url=self.proxy_url,
-                            account_label=account_label,
-                        )
-            
-            return podcast_results
+            # 返回播客数据（不再单独发送，而是集成到当日汇总消息中）
+            return podcast_data
             
         except Exception as e:
             print(f"播客生成出错: {e}")
@@ -674,6 +662,11 @@ class NewsAnalyzer:
                 # 发送实时通知（使用完整历史数据的统计结果）
                 summary_html = None
                 if mode_strategy["should_send_realtime"]:
+                    # 生成播客（如果启用）
+                    podcast_data = None
+                    if self.ctx.config.get("PODCAST", {}).get("ENABLED", False):
+                        podcast_data = self._generate_podcasts(stats, historical_title_info)
+                    
                     self._send_notification_if_needed(
                         stats,
                         mode_strategy["realtime_report_type"],
@@ -682,6 +675,7 @@ class NewsAnalyzer:
                         new_titles=historical_new_titles,
                         id_to_name=combined_id_to_name,
                         html_file_path=html_file,
+                        podcast_data=podcast_data,
                     )
             else:
                 print("❌ 严重错误：无法读取刚保存的数据文件")
@@ -705,6 +699,11 @@ class NewsAnalyzer:
             # 发送实时通知（如果需要）
             summary_html = None
             if mode_strategy["should_send_realtime"]:
+                # 生成播客（如果启用）
+                podcast_data = None
+                if self.ctx.config.get("PODCAST", {}).get("ENABLED", False):
+                    podcast_data = self._generate_podcasts(stats, title_info)
+                
                 self._send_notification_if_needed(
                     stats,
                     mode_strategy["realtime_report_type"],
@@ -713,6 +712,7 @@ class NewsAnalyzer:
                     new_titles=new_titles,
                     id_to_name=id_to_name,
                     html_file_path=html_file,
+                    podcast_data=podcast_data,
                 )
 
         # 生成汇总报告（如果需要）
@@ -724,37 +724,8 @@ class NewsAnalyzer:
                     mode_strategy["summary_mode"]
                 )
             else:
-                # daily模式：直接生成汇总报告并发送通知
+                # daily模式：直接生成汇总报告并发送通知（播客数据已在其中生成）
                 summary_html = self._generate_summary_report(mode_strategy)
-
-        # 生成播客（如果启用）
-        if self.ctx.config.get("PODCAST", {}).get("ENABLED", False):
-            # 需要重新加载分析数据以获取完整的 stats 和 title_info
-            analysis_data = self._load_analysis_data()
-            if analysis_data:
-                (
-                    all_results,
-                    podcast_id_to_name,
-                    podcast_title_info,
-                    podcast_new_titles,
-                    podcast_word_groups,
-                    podcast_filter_words,
-                    podcast_global_filters,
-                ) = analysis_data
-                
-                # 运行分析获取 stats
-                podcast_stats, _ = self._run_analysis_pipeline(
-                    all_results,
-                    mode_strategy.get("summary_mode", "daily"),
-                    podcast_title_info,
-                    podcast_new_titles,
-                    podcast_word_groups,
-                    podcast_filter_words,
-                    podcast_id_to_name,
-                    global_filters=podcast_global_filters,
-                )
-                
-                self._generate_podcasts(podcast_stats, podcast_title_info)
 
         # 打开浏览器（仅在非容器环境）
         if self._should_open_browser() and html_file:

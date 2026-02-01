@@ -32,6 +32,137 @@ from .batch import add_batch_headers, get_max_batch_header_size
 from .formatters import convert_markdown_to_mrkdwn, strip_markdown
 
 
+# ==========================
+# Feishu 卡片构建（可复用/可预览）
+# ==========================
+def _truncate_text(text: str, max_chars: int) -> str:
+    """截断文本，避免卡片过大（按字符粗略控制）"""
+    if not text:
+        return ""
+    text = text.strip()
+    if max_chars <= 0:
+        return ""
+    return text if len(text) <= max_chars else (text[:max_chars] + "…")
+
+
+def build_feishu_card_payload(
+    *,
+    report_type: str,
+    batch_content: str,
+    podcast_data: Optional[Dict[str, Dict]] = None,
+    include_podcast_sections: bool = False,
+    max_summary_chars_per_keyword: int = 600,
+    max_keywords_in_card: int = 10,
+) -> Dict:
+    """
+    构建飞书 interactive 卡片 payload（不发送网络请求，便于本地预览）
+
+    Args:
+        report_type: 报告类型（卡片标题）
+        batch_content: 本批次正文（热点统计/新增新闻等）
+        podcast_data: 播客数据 {关键词: {audio_url, summary, article_count}}
+        include_podcast_sections: 是否在卡片末尾追加播客两段内容
+        max_summary_chars_per_keyword: 每个关键词摘要的最大字符数（避免卡片过大）
+        max_keywords_in_card: 最多展示多少个关键词（避免按钮/摘要过多）
+
+    Returns:
+        飞书 webhook 所需的 JSON payload（dict）
+    """
+    # 使用消息卡片格式（interactive），支持 <font color='xxx'> 等富文本样式
+    elements = [{"tag": "markdown", "content": batch_content}]
+
+    if include_podcast_sections and podcast_data:
+        # 只保留有内容的条目，并限制数量
+        items = []
+        for keyword, data in podcast_data.items():
+            if not keyword or not isinstance(data, dict):
+                continue
+            audio_url = (data.get("audio_url") or "").strip()
+            summary = (data.get("summary") or "").strip()
+            article_count = data.get("article_count", 0) or 0
+            if not audio_url and not summary:
+                continue
+            items.append((keyword, audio_url, summary, article_count))
+
+        if items:
+            items = items[: max_keywords_in_card if max_keywords_in_card > 0 else len(items)]
+
+            # 分隔线
+            elements.append({"tag": "hr"})
+
+            # 第一部分：AI 文稿摘要
+            elements.append(
+                {
+                    "tag": "markdown",
+                    "content": "📝 **AI 总结文稿**（可直接阅读/转发）",
+                }
+            )
+
+            for keyword, audio_url, summary, article_count in items:
+                summary_preview = _truncate_text(summary, max_summary_chars_per_keyword)
+                header = f"**📌 {keyword}**"
+                if article_count:
+                    header += f"（{article_count} 篇）"
+
+                link_line = f"\n\n[🎧 语音播客链接]({audio_url})" if audio_url else ""
+                body = f"{header}\n\n{summary_preview}{link_line}"
+                elements.append({"tag": "markdown", "content": body})
+
+            # 第二部分：语音播客链接（按钮 + 说明）
+            elements.append({"tag": "hr"})
+            elements.append(
+                {
+                    "tag": "markdown",
+                    "content": "🎙️ **语音播客链接**（点按钮收听）",
+                }
+            )
+
+            podcast_buttons = []
+            for keyword, audio_url, _, __ in items:
+                if not audio_url:
+                    continue
+                podcast_buttons.append(
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": f"🎧 {keyword}"},
+                        "type": "primary",
+                        "multi_url": {
+                            "url": audio_url,
+                            "pc_url": audio_url,
+                            "android_url": audio_url,
+                            "ios_url": audio_url,
+                        },
+                    }
+                )
+
+            # 每行最多 3 个按钮，分组添加
+            for j in range(0, len(podcast_buttons), 3):
+                elements.append({"tag": "action", "actions": podcast_buttons[j : j + 3]})
+
+            # 底部说明（你的播客上传逻辑里默认 24h 临时链接）
+            elements.append(
+                {
+                    "tag": "note",
+                    "elements": [{"tag": "plain_text", "content": "💡 语音播客链接通常 24 小时内有效"}],
+                }
+            )
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {
+                "wide_screen_mode": True,
+                "enable_forward": True,
+            },
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📊 TrendRadar - {report_type}"},
+                "template": "blue",
+            },
+            "elements": elements,
+        },
+    }
+
+
 # === SMTP 邮件配置 ===
 SMTP_CONFIGS = {
     # Gmail（使用 STARTTLS）
@@ -69,6 +200,7 @@ def send_to_feishu(
     batch_interval: float = 1.0,
     split_content_func: Callable = None,
     get_time_func: Callable = None,
+    podcast_data: Optional[Dict[str, Dict]] = None,
 ) -> bool:
     """
     发送到飞书（支持分批发送，使用消息卡片格式以支持富文本样式）
@@ -85,6 +217,7 @@ def send_to_feishu(
         batch_interval: 批次发送间隔（秒）
         split_content_func: 内容分批函数
         get_time_func: 获取当前时间的函数
+        podcast_data: 播客数据 {关键词: {audio_url, summary, article_count}}（可选）
 
     Returns:
         bool: 发送是否成功
@@ -124,30 +257,18 @@ def send_to_feishu(
         )
         now = get_time_func() if get_time_func else datetime.now()
 
-        # 使用消息卡片格式（interactive），支持 <font color='xxx'> 等富文本样式
-        # 飞书卡片的 markdown 模块支持颜色语法：<font color='red'>文本</font>
-        payload = {
-            "msg_type": "interactive",
-            "card": {
-                "config": {
-                    "wide_screen_mode": True,  # 宽屏模式，更好的阅读体验
-                    "enable_forward": True,    # 允许转发
-                },
-                "header": {
-                    "title": {
-                        "tag": "plain_text",
-                        "content": f"📊 TrendRadar - {report_type}"
-                    },
-                    "template": "blue"  # 卡片头部颜色：blue/green/orange/red/purple
-                },
-                "elements": [
-                    {
-                        "tag": "markdown",
-                        "content": batch_content  # markdown 模块支持 <font color='xxx'> 语法
-                    }
-                ]
-            }
-        }
+        # 仅在最后一批追加“AI 文稿 + 播客链接”两段内容，避免重复刷屏
+        is_last_batch = i == len(batches)
+
+        payload = build_feishu_card_payload(
+            report_type=report_type,
+            batch_content=batch_content,
+            podcast_data=podcast_data,
+            include_podcast_sections=bool(is_last_batch),
+            # 这里的值是“保守配置”，避免飞书卡片过大导致发送失败
+            max_summary_chars_per_keyword=600,
+            max_keywords_in_card=10,
+        )
 
         try:
             response = requests.post(

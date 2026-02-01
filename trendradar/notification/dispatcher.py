@@ -66,6 +66,7 @@ class NotificationDispatcher:
         proxy_url: Optional[str] = None,
         mode: str = "daily",
         html_file_path: Optional[str] = None,
+        podcast_data: Optional[Dict] = None,
     ) -> Dict[str, bool]:
         """
         分发通知到所有已配置的渠道
@@ -77,6 +78,7 @@ class NotificationDispatcher:
             proxy_url: 代理 URL（可选）
             mode: 报告模式 (daily/current/incremental)
             html_file_path: HTML 报告文件路径（邮件使用）
+            podcast_data: 播客数据 {关键词: {audio_url, summary, article_count}}（可选）
 
         Returns:
             Dict[str, bool]: 每个渠道的发送结果，key 为渠道名，value 为是否成功
@@ -86,7 +88,7 @@ class NotificationDispatcher:
         # 飞书
         if self.config.get("FEISHU_WEBHOOK_URL"):
             results["feishu"] = self._send_feishu(
-                report_data, report_type, update_info, proxy_url, mode
+                report_data, report_type, update_info, proxy_url, mode, podcast_data
             )
 
         # 钉钉
@@ -176,6 +178,7 @@ class NotificationDispatcher:
         update_info: Optional[Dict],
         proxy_url: Optional[str],
         mode: str,
+        podcast_data: Optional[Dict] = None,
     ) -> bool:
         """发送到飞书（多账号）"""
         return self._send_to_multi_accounts(
@@ -193,6 +196,7 @@ class NotificationDispatcher:
                 batch_interval=self.config.get("BATCH_SEND_INTERVAL", 1.0),
                 split_content_func=self.split_content_func,
                 get_time_func=self.get_time_func,
+                podcast_data=podcast_data,
             ),
         )
 
