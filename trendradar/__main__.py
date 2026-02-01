@@ -342,13 +342,21 @@ class NewsAnalyzer:
         has_notification = self._has_notification_configured()
         cfg = self.ctx.config
 
+        # GitHub Actions 手动触发(workflow_dispatch)时，绕过推送窗口限制
+        # - 目的：你手动点一次“Get Hot News”就能立刻收到消息，不受时间段/once_per_day影响
+        # - 定时(schedule)触发仍然遵守推送窗口
+        is_manual_workflow_dispatch = (
+            os.environ.get("GITHUB_ACTIONS") == "true"
+            and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+        )
+
         if (
             cfg["ENABLE_NOTIFICATION"]
             and has_notification
             and self._has_valid_content(stats, new_titles)
         ):
             # 推送窗口控制
-            if cfg["PUSH_WINDOW"]["ENABLED"]:
+            if cfg["PUSH_WINDOW"]["ENABLED"] and not is_manual_workflow_dispatch:
                 push_manager = self.ctx.create_push_manager()
                 time_range_start = cfg["PUSH_WINDOW"]["TIME_RANGE"]["START"]
                 time_range_end = cfg["PUSH_WINDOW"]["TIME_RANGE"]["END"]
