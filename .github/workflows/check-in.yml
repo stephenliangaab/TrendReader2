@@ -1,0 +1,15 @@
+name: Check In
+
+on:
+  # 手动运行一次，用于“激活/续命”仓库的 Actions 活跃度
+  workflow_dispatch: {}
+
+jobs:
+  check_in:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check in
+        run: |
+          echo "Check In OK: $(date -u)"
+

@@ -51,6 +51,8 @@ def build_feishu_card_payload(
     batch_content: str,
     podcast_data: Optional[Dict[str, Dict]] = None,
     include_podcast_sections: bool = False,
+    include_podcast_summaries: bool = False,
+    include_podcast_buttons: bool = True,
     max_summary_chars_per_keyword: int = 600,
     max_keywords_in_card: int = 10,
 ) -> Dict:
@@ -62,6 +64,8 @@ def build_feishu_card_payload(
         batch_content: 本批次正文（热点统计/新增新闻等）
         podcast_data: 播客数据 {关键词: {audio_url, summary, article_count}}
         include_podcast_sections: 是否在卡片末尾追加播客两段内容
+        include_podcast_summaries: 是否追加“AI总结文稿”区域（内容较长，可能导致卡片过大）
+        include_podcast_buttons: 是否追加“收听播客按钮”区域（更轻量，推荐开启）
         max_summary_chars_per_keyword: 每个关键词摘要的最大字符数（避免卡片过大）
         max_keywords_in_card: 最多展示多少个关键词（避免按钮/摘要过多）
 
@@ -80,6 +84,7 @@ def build_feishu_card_payload(
             audio_url = (data.get("audio_url") or "").strip()
             summary = (data.get("summary") or "").strip()
             article_count = data.get("article_count", 0) or 0
+            # 既没有链接也没有摘要，就没必要展示
             if not audio_url and not summary:
                 continue
             items.append((keyword, audio_url, summary, article_count))
@@ -90,62 +95,84 @@ def build_feishu_card_payload(
             # 分隔线
             elements.append({"tag": "hr"})
 
-            # 第一部分：AI 文稿摘要
-            elements.append(
-                {
-                    "tag": "markdown",
-                    "content": "📝 **AI 总结文稿**（可直接阅读/转发）",
-                }
-            )
-
-            for keyword, audio_url, summary, article_count in items:
-                summary_preview = _truncate_text(summary, max_summary_chars_per_keyword)
-                header = f"**📌 {keyword}**"
-                if article_count:
-                    header += f"（{article_count} 篇）"
-
-                link_line = f"\n\n[🎧 语音播客链接]({audio_url})" if audio_url else ""
-                body = f"{header}\n\n{summary_preview}{link_line}"
-                elements.append({"tag": "markdown", "content": body})
-
-            # 第二部分：语音播客链接（按钮 + 说明）
-            elements.append({"tag": "hr"})
-            elements.append(
-                {
-                    "tag": "markdown",
-                    "content": "🎙️ **语音播客链接**（点按钮收听）",
-                }
-            )
-
-            podcast_buttons = []
-            for keyword, audio_url, _, __ in items:
-                if not audio_url:
-                    continue
-                podcast_buttons.append(
+            # 第一部分：播客收听按钮（轻量，优先展示）
+            if include_podcast_buttons:
+                elements.append(
                     {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": f"🎧 {keyword}"},
-                        "type": "primary",
-                        "multi_url": {
-                            "url": audio_url,
-                            "pc_url": audio_url,
-                            "android_url": audio_url,
-                            "ios_url": audio_url,
-                        },
+                        "tag": "markdown",
+                        "content": "🎙️ **热点播客**（点按钮收听）",
                     }
                 )
 
-            # 每行最多 3 个按钮，分组添加
-            for j in range(0, len(podcast_buttons), 3):
-                elements.append({"tag": "action", "actions": podcast_buttons[j : j + 3]})
+                podcast_buttons = []
+                for keyword, audio_url, _, __ in items:
+                    if not audio_url:
+                        continue
+                    # 按钮文案与用户截图保持一致：收听「xxx」播客
+                    podcast_buttons.append(
+                        {
+                            "tag": "button",
+                            "text": {
+                                "tag": "plain_text",
+                                "content": f"收听「{keyword}」播客",
+                            },
+                            "type": "primary",
+                            "multi_url": {
+                                "url": audio_url,
+                                "pc_url": audio_url,
+                                "android_url": audio_url,
+                                "ios_url": audio_url,
+                            },
+                        }
+                    )
 
-            # 底部说明（你的播客上传逻辑里默认 24h 临时链接）
-            elements.append(
-                {
-                    "tag": "note",
-                    "elements": [{"tag": "plain_text", "content": "💡 语音播客链接通常 24 小时内有效"}],
-                }
-            )
+                # 每行最多 3 个按钮，分组添加
+                for j in range(0, len(podcast_buttons), 3):
+                    elements.append({"tag": "action", "actions": podcast_buttons[j : j + 3]})
+
+                # 如果没有任何可用链接，给出提示，避免用户误以为功能“消失”
+                if not podcast_buttons:
+                    elements.append(
+                        {
+                            "tag": "note",
+                            "elements": [
+                                {
+                                    "tag": "plain_text",
+                                    "content": "⚠️ 本次未生成可收听的播客链接（请检查播客配置/密钥/上传存储）",
+                                }
+                            ],
+                        }
+                    )
+
+                # 底部说明（你的播客上传逻辑里默认 24h 临时链接）
+                elements.append(
+                    {
+                        "tag": "note",
+                        "elements": [
+                            {"tag": "plain_text", "content": "💡 音频链接通常24小时内有效"},
+                        ],
+                    }
+                )
+
+            # 第二部分：AI 文稿摘要（较长，默认不展示；仅在需要时开启）
+            if include_podcast_summaries:
+                elements.append({"tag": "hr"})
+                elements.append(
+                    {
+                        "tag": "markdown",
+                        "content": "📝 **AI总结文稿**（可直接阅读/转发）",
+                    }
+                )
+
+                for keyword, audio_url, summary, article_count in items:
+                    summary_preview = _truncate_text(summary, max_summary_chars_per_keyword)
+                    header = f"**📌 {keyword}**"
+                    if article_count:
+                        header += f"（{article_count} 篇）"
+
+                    link_line = f"\n\n[🎧 语音播客链接]({audio_url})" if audio_url else ""
+                    body = f"{header}\n\n{summary_preview}{link_line}"
+                    elements.append({"tag": "markdown", "content": body})
 
     return {
         "msg_type": "interactive",
@@ -257,14 +284,20 @@ def send_to_feishu(
         )
         now = get_time_func() if get_time_func else datetime.now()
 
-        # 仅在最后一批追加“AI 文稿 + 播客链接”两段内容，避免重复刷屏
+        # 飞书消息可能会被分批发送：
+        # - 为了让“播客按钮”更容易被看到：默认放在**第一批**（轻量）
+        # - 如果只有 1 批，则可同时展示按钮 + AI文稿（如需要）
+        is_first_batch = i == 1
         is_last_batch = i == len(batches)
 
         payload = build_feishu_card_payload(
             report_type=report_type,
             batch_content=batch_content,
             podcast_data=podcast_data,
-            include_podcast_sections=bool(is_last_batch),
+            include_podcast_sections=bool(is_first_batch or (is_last_batch and len(batches) == 1)),
+            # 只展示按钮，避免卡片过大导致发送失败
+            include_podcast_buttons=True,
+            include_podcast_summaries=False,
             # 这里的值是“保守配置”，避免飞书卡片过大导致发送失败
             max_summary_chars_per_keyword=600,
             max_keywords_in_card=10,
